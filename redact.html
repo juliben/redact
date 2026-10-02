@@ -319,6 +319,7 @@ $('save').onclick = save;
 $('folder').onclick = saveTo;
 $('folder').hidden = $('folderLabel').hidden = !window.showDirectoryPicker;
 if (touch) $('drop').textContent = 'Upload an image\u2026';
+else $('save').textContent = 'Save image';
 $('size').oninput = e => setSize(e.target.value);
 $('file').onchange = e => { load(e.target.files[0]); e.target.value = ''; };
 
