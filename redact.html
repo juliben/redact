@@ -52,6 +52,7 @@ const canvas = $('canvas'), ctx = canvas.getContext('2d');
 const base = document.createElement('canvas'), baseCtx = base.getContext('2d');
 const orig = document.createElement('canvas'), origCtx = orig.getContext('2d', { willReadFrequently: true });
 
+const touch = matchMedia('(pointer: coarse)').matches;
 let fileName = 'image', folder = null, ops = [], undone = [], stroke = null, hover = null;
 
 async function load(file) {
@@ -69,6 +70,11 @@ async function load(file) {
   canvas.style.display = 'block';
   $('save').disabled = $('folder').disabled = false;
   rebuild();
+  if (touch) {
+    const finger = Math.round(44 * w / canvas.getBoundingClientRect().width);
+    $('size').max = Math.max($('size').max, finger * 3);
+    setSize(finger);
+  }
 }
 
 function brushSize() { return +$('size').value; }
@@ -235,7 +241,7 @@ $('clear').onclick = () => { if (confirm('Remove all redactions?')) { ops = []; 
 $('save').onclick = save;
 $('folder').onclick = saveTo;
 $('folder').hidden = $('folderLabel').hidden = !window.showDirectoryPicker;
-if (matchMedia('(pointer: coarse)').matches) $('drop').textContent = 'Upload an image…';
+if (touch) $('drop').textContent = 'Upload an image…';
 $('size').oninput = e => setSize(e.target.value);
 $('file').onchange = e => { load(e.target.files[0]); e.target.value = ''; };
 
