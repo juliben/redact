@@ -50,7 +50,7 @@
 <body>
 <header>
   <h1>Redact</h1>
-  <label class="btn">Open…<input id="file" type="file" accept="image/*" hidden></label>
+  <label class="btn">Open&hellip;<input id="file" type="file" accept="image/*" hidden></label>
   <label class="size muted">Size <input id="size" type="range" min="4" max="200" value="24"> <span id="sizeLabel">24px</span></label>
   <label><input id="freehand" type="checkbox"> Freehand</label>
   <div class="actions">
@@ -58,19 +58,19 @@
     <button id="redo" disabled>Redo</button>
     <button id="clear" disabled>Clear</button>
     <button id="save" disabled>Save</button>
-    <button id="folder" disabled>Save to…</button>
+    <button id="folder" disabled>Save to&hellip;</button>
     <span id="folderLabel" class="muted"></span>
   </div>
 </header>
 <main>
-  <label id="drop" for="file">Drop or upload an image…</label>
+  <label id="drop" for="file">Drop or upload an image&hellip;</label>
   <canvas id="canvas"></canvas>
 </main>
 <div id="sheet" hidden>
   <img id="result" alt="Redacted image">
   <p>Press and hold the image to save it to your gallery.</p>
   <div>
-    <button id="share" hidden>Share…</button>
+    <button id="share" hidden>Share&hellip;</button>
     <button id="done">Done</button>
   </div>
 </div>
@@ -318,7 +318,7 @@ $('clear').onclick = () => { if (confirm('Remove all redactions?')) { ops = []; 
 $('save').onclick = save;
 $('folder').onclick = saveTo;
 $('folder').hidden = $('folderLabel').hidden = !window.showDirectoryPicker;
-if (touch) $('drop').textContent = 'Upload an image…';
+if (touch) $('drop').textContent = 'Upload an image\u2026';
 $('size').oninput = e => setSize(e.target.value);
 $('file').onchange = e => { load(e.target.files[0]); e.target.value = ''; };
 
