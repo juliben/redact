@@ -36,9 +36,9 @@
   <button id="undo" disabled>Undo</button>
   <button id="redo" disabled>Redo</button>
   <button id="clear" disabled>Clear</button>
-  <button id="folder">Choose folder…</button>
+  <button id="save" disabled>Save</button>
+  <button id="folder" disabled>Save to…</button>
   <span id="folderLabel" class="muted"></span>
-  <button id="save" disabled>Save image</button>
 </header>
 <main>
   <div id="drop">
@@ -68,7 +68,7 @@ async function load(file) {
   $('size').max = Math.max(64, Math.round(h / 5));
   $('drop').style.display = 'none';
   canvas.style.display = 'block';
-  $('save').disabled = false;
+  $('save').disabled = $('folder').disabled = false;
   rebuild();
 }
 
@@ -201,11 +201,9 @@ canvas.addEventListener('pointerleave', () => { hover = null; render(); });
 
 function undo() { if (ops.length) { undone.push(ops.pop()); rebuild(); } }
 function redo() { if (undone.length) { ops.push(undone.pop()); rebuild(); } }
-async function chooseFolder() {
-  try {
-    folder = await showDirectoryPicker({ mode: 'readwrite' });
-    $('folderLabel').textContent = folder.name;
-  } catch {}
+async function saveTo() {
+  try { folder = await showDirectoryPicker({ mode: 'readwrite' }); } catch { return; }
+  save();
 }
 function save() {
   if ($('save').disabled) return;
@@ -233,7 +231,7 @@ $('undo').onclick = undo;
 $('redo').onclick = redo;
 $('clear').onclick = () => { if (confirm('Remove all redactions?')) { ops = []; undone = []; rebuild(); } };
 $('save').onclick = save;
-$('folder').onclick = chooseFolder;
+$('folder').onclick = saveTo;
 $('folder').hidden = $('folderLabel').hidden = !window.showDirectoryPicker;
 $('size').oninput = e => setSize(e.target.value);
 $('file').onchange = e => { load(e.target.files[0]); e.target.value = ''; };
