@@ -29,6 +29,12 @@
   #drop:hover, #drop.over { border-color: var(--accent); }
   canvas { display: none; max-width: 100%; max-height: calc(100vh - 100px); cursor: none; touch-action: none;
            box-shadow: 0 2px 12px rgba(0,0,0,.25); }
+  #sheet { position: fixed; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center;
+           justify-content: center; gap: 12px; padding: 16px; background: rgba(0,0,0,.9); color: #fff; text-align: center; }
+  #sheet[hidden] { display: none; }
+  #sheet img { max-width: 100%; max-height: 70vh; -webkit-touch-callout: default; -webkit-user-select: auto; user-select: auto; }
+  #sheet div { display: flex; gap: 8px; }
+  #sheet button { padding: 10px 20px; }
   @media (max-width: 640px) {
     .size { order: 1; flex: 1 1 100%; }
     .size input { flex: 1; }
@@ -60,6 +66,14 @@
   <label id="drop" for="file">Drop or upload an image…</label>
   <canvas id="canvas"></canvas>
 </main>
+<div id="sheet" hidden>
+  <img id="result" alt="Redacted image">
+  <p>Press and hold the image to save it to your gallery.</p>
+  <div>
+    <button id="share" hidden>Share…</button>
+    <button id="done">Done</button>
+  </div>
+</div>
 <script>
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
@@ -85,9 +99,8 @@ async function load(file) {
   $('save').disabled = $('folder').disabled = false;
   rebuild();
   if (touch) {
-    const finger = Math.round(44 * w / canvas.getBoundingClientRect().width);
-    $('size').max = Math.max($('size').max, finger * 3);
-    setSize(finger);
+    $('size').max = Math.max($('size').max, 255);
+    setSize(85);
   }
 }
 
@@ -227,9 +240,19 @@ async function saveTo() {
   try { folder = await showDirectoryPicker({ mode: 'readwrite' }); } catch { return; }
   save();
 }
+function showSheet(name) {
+  const url = base.toDataURL('image/png');
+  const bytes = Uint8Array.from(atob(url.split(',')[1]), c => c.charCodeAt(0));
+  const file = new File([bytes], name, { type: 'image/png' });
+  $('result').src = url;
+  $('share').hidden = !navigator.canShare?.({ files: [file] });
+  $('share').onclick = () => navigator.share({ files: [file] }).catch(() => {});
+  $('sheet').hidden = false;
+}
 function save() {
   if ($('save').disabled) return;
   const name = `${fileName}-redacted.png`;
+  if (touch) return showSheet(name);
   base.toBlob(async blob => {
     if (folder) {
       const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
@@ -249,6 +272,7 @@ function save() {
 }
 function setSize(v) { $('size').value = v; $('sizeLabel').textContent = brushSize() + 'px'; render(); }
 
+$('done').onclick = () => { $('sheet').hidden = true; $('result').removeAttribute('src'); };
 $('undo').onclick = undo;
 $('redo').onclick = redo;
 $('clear').onclick = () => { if (confirm('Remove all redactions?')) { ops = []; undone = []; rebuild(); } };
