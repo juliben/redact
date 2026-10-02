@@ -24,10 +24,10 @@
   .size { display: flex; align-items: center; gap: 8px; }
   #sizeLabel { width: 4.5ch; font-variant-numeric: tabular-nums; }
   .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-  main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; overflow: hidden; }
   #drop { border: 2px dashed var(--border); border-radius: 12px; padding: 48px 24px; text-align: center; max-width: 480px; cursor: pointer; }
   #drop:hover, #drop.over { border-color: var(--accent); }
-  canvas { display: none; max-width: 100%; max-height: calc(100vh - 100px); cursor: none; touch-action: none;
+  canvas { display: none; transform-origin: 0 0; max-width: 100%; max-height: calc(100vh - 100px); cursor: none; touch-action: none;
            box-shadow: 0 2px 12px rgba(0,0,0,.25); }
   #sheet { position: fixed; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center;
            justify-content: center; gap: 12px; padding: 16px; background: rgba(0,0,0,.9); color: #fff; text-align: center; }
@@ -81,6 +81,8 @@ const base = document.createElement('canvas'), baseCtx = base.getContext('2d');
 const orig = document.createElement('canvas'), origCtx = orig.getContext('2d', { willReadFrequently: true });
 
 const touch = matchMedia('(pointer: coarse)').matches;
+const pointers = new Map();
+let view = { s: 1, x: 0, y: 0 }, pinch = null;
 let pixels = null, fileName = 'image', folder = null, ops = [], undone = [], stroke = null, hover = null;
 
 async function load(file) {
@@ -97,6 +99,7 @@ async function load(file) {
   $('size').max = Math.max(64, Math.round(h / 5));
   $('drop').style.display = 'none';
   canvas.style.display = 'block';
+  setView({ s: 1, x: 0, y: 0 });
   $('save').disabled = $('folder').disabled = false;
   rebuild();
   if (touch) {
@@ -219,21 +222,48 @@ function extend(p) {
 
 canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+function setView(v) {
+  view = v;
+  canvas.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.s})`;
+}
+
+function startPinch() {
+  const [a, b] = [...pointers.values()], r = canvas.getBoundingClientRect();
+  pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), m: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+            view, left: r.left - view.x, top: r.top - view.y };
+}
+
+function movePinch() {
+  const [a, b] = [...pointers.values()], { d, m, view: v, left, top } = pinch;
+  const s = Math.min(8, Math.max(1, v.s * Math.hypot(a.x - b.x, a.y - b.y) / d));
+  if (s === 1) return setView({ s: 1, x: 0, y: 0 });
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  setView({ s, x: mx - left - s * (m.x - left - v.x) / v.s, y: my - top - s * (m.y - top - v.y) / v.s });
+}
+
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
-  canvas.setPointerCapture(e.pointerId);
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) { stroke = hover = null; startPinch(); render(); }
+  if (pointers.size > 1) return;
   const p = point(e);
   stroke = { size: brushSize(), start: p, last: p, rects: [], cells: new Map() };
   extend(p);
   render();
 });
 canvas.addEventListener('pointermove', e => {
-  hover = point(e);
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch) return movePinch();
+  if (e.pointerType !== 'touch' || stroke) hover = point(e);
   if (stroke) extend(hover);
   render();
 });
-function finish() {
-  if (!stroke) return;
+function finish(e) {
+  pointers.delete(e.pointerId);
+  if (pinch) { if (pointers.size < 2) pinch = null; return; }
+  if (e.pointerType === 'touch') hover = null;
+  if (!stroke) return render();
   ops.push(stroke);
   undone = [];
   stroke = null;
