@@ -53,6 +53,7 @@
   <label class="btn">Open&hellip;<input id="file" type="file" accept="image/*" hidden></label>
   <label class="size muted">Size <input id="size" type="range" min="4" max="200" value="24"> <span id="sizeLabel">24px</span></label>
   <label><input id="freehand" type="checkbox"> Freehand</label>
+  <label><input id="crop" type="checkbox"> Crop</label>
   <div class="actions">
     <button id="undo" disabled>Undo</button>
     <button id="redo" disabled>Redo</button>
@@ -109,7 +110,8 @@ async function load(file) {
 }
 
 function brushSize() { return +$('size').value; }
-function blockSize() { return Math.max(8, Math.round(Math.max(canvas.width, canvas.height) / 60)); }
+function blockSize() { return Math.max(8, Math.round(Math.max(orig.width, orig.height) / 60)); }
+function cropRect() { return ops.findLast(op => op.crop)?.crop ?? { x: 0, y: 0, w: orig.width, h: orig.height }; }
 
 function bounds(rects) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -175,16 +177,33 @@ function paint(c, op) {
 
 function rebuild() {
   baseCtx.drawImage(orig, 0, 0);
-  ops.forEach(op => paint(baseCtx, op));
+  ops.forEach(op => op.rects && paint(baseCtx, op));
+  const c = cropRect();
+  if (canvas.width !== c.w || canvas.height !== c.h) {
+    canvas.width = c.w; canvas.height = c.h;
+    setView({ s: 1, x: 0, y: 0 });
+  }
   $('undo').disabled = $('clear').disabled = !ops.length;
   $('redo').disabled = !undone.length;
   render();
 }
 
 function render() {
+  const c = cropRect();
+  ctx.setTransform(1, 0, 0, 1, -c.x, -c.y);
   ctx.drawImage(base, 0, 0);
-  if (stroke) paint(ctx, stroke);
-  if (hover) {
+  if (stroke?.crop) {
+    const r = stroke.crop, px = canvas.width / canvas.getBoundingClientRect().width;
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.beginPath();
+    ctx.rect(c.x, c.y, c.w, c.h);
+    ctx.rect(r.x, r.y, r.w, r.h);
+    ctx.fill('evenodd');
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = px;
+    ctx.strokeRect(r.x + px / 2, r.y + px / 2, r.w - px, r.h - px);
+  } else if (stroke) paint(ctx, stroke);
+  if (hover && !$('crop').checked) {
     const size = brushSize(), px = canvas.width / canvas.getBoundingClientRect().width;
     ctx.save();
     ctx.globalCompositeOperation = 'difference';
@@ -193,18 +212,24 @@ function render() {
     ctx.strokeRect(Math.round(hover.x - size / 2) + px / 2, Math.round(hover.y - size / 2) + px / 2, size - px, size - px);
     ctx.restore();
   }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function point(e) {
-  const r = canvas.getBoundingClientRect();
+  const r = canvas.getBoundingClientRect(), c = cropRect();
   return {
-    x: Math.min(canvas.width, Math.max(0, (e.clientX - r.left) * canvas.width / r.width)),
-    y: Math.min(canvas.height, Math.max(0, (e.clientY - r.top) * canvas.height / r.height)),
+    x: c.x + Math.min(canvas.width, Math.max(0, (e.clientX - r.left) * canvas.width / r.width)),
+    y: c.y + Math.min(canvas.height, Math.max(0, (e.clientY - r.top) * canvas.height / r.height)),
   };
 }
 
 function extend(p) {
   const { size, start, last } = stroke;
+  if (stroke.crop) {
+    const x = Math.round(Math.min(start.x, p.x)), y = Math.round(Math.min(start.y, p.y));
+    stroke.crop = { x, y, w: Math.round(Math.max(start.x, p.x)) - x, h: Math.round(Math.max(start.y, p.y)) - y };
+    return;
+  }
   stroke.ink = null;
   if (!$('freehand').checked) {
     const x0 = Math.round(Math.min(start.x, p.x) - size / 2), x1 = Math.round(Math.max(start.x, p.x) + size / 2);
@@ -248,7 +273,7 @@ canvas.addEventListener('pointerdown', e => {
   if (pointers.size === 2) { stroke = hover = null; startPinch(); render(); }
   if (pointers.size > 1) return;
   const p = point(e);
-  stroke = { size: brushSize(), start: p, last: p, rects: [], cells: new Map() };
+  stroke = $('crop').checked ? { start: p, crop: {} } : { size: brushSize(), start: p, last: p, rects: [], cells: new Map() };
   extend(p);
   render();
 });
@@ -264,6 +289,11 @@ function finish(e) {
   if (pinch) { if (pointers.size < 2) pinch = null; return; }
   if (e.pointerType === 'touch') hover = null;
   if (!stroke) return render();
+  if (stroke.crop) {
+    if (stroke.crop.w < 4 || stroke.crop.h < 4) { stroke = null; return render(); }
+    delete stroke.start;
+    setCrop(false);
+  }
   ops.push(stroke);
   undone = [];
   stroke = null;
@@ -279,8 +309,14 @@ async function saveTo() {
   try { folder = await showDirectoryPicker({ mode: 'readwrite' }); } catch { return; }
   save();
 }
+function output() {
+  const c = cropRect(), out = document.createElement('canvas');
+  out.width = c.w; out.height = c.h;
+  out.getContext('2d').drawImage(base, -c.x, -c.y);
+  return out;
+}
 function showSheet(name) {
-  const url = base.toDataURL('image/png');
+  const url = output().toDataURL('image/png');
   const bytes = Uint8Array.from(atob(url.split(',')[1]), c => c.charCodeAt(0));
   const file = new File([bytes], name, { type: 'image/png' });
   $('result').src = url;
@@ -292,7 +328,7 @@ function save() {
   if ($('save').disabled) return;
   const name = `${fileName}-redacted.png`;
   if (touch) return showSheet(name);
-  base.toBlob(async blob => {
+  output().toBlob(async blob => {
     if (folder) {
       const writable = await (await folder.getFileHandle(name, { create: true })).createWritable();
       await writable.write(blob);
@@ -309,17 +345,19 @@ function save() {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   }, 'image/png');
 }
+function setCrop(on) { $('crop').checked = on; canvas.style.cursor = on ? 'crosshair' : ''; render(); }
 function setSize(v) { $('size').value = v; $('sizeLabel').textContent = brushSize() + 'px'; render(); }
 
 $('done').onclick = () => { $('sheet').hidden = true; $('result').removeAttribute('src'); };
 $('undo').onclick = undo;
 $('redo').onclick = redo;
-$('clear').onclick = () => { if (confirm('Remove all redactions?')) { ops = []; undone = []; rebuild(); } };
+$('clear').onclick = () => { if (confirm('Remove all edits?')) { ops = []; undone = []; rebuild(); } };
 $('save').onclick = save;
 $('folder').onclick = saveTo;
 $('folder').hidden = $('folderLabel').hidden = !window.showDirectoryPicker;
 if (touch) $('drop').textContent = 'Upload an image\u2026';
 else $('save').textContent = 'Save image';
+$('crop').onchange = e => setCrop(e.target.checked);
 $('size').oninput = e => setSize(e.target.value);
 $('file').onchange = e => { load(e.target.files[0]); e.target.value = ''; };
 
@@ -337,6 +375,8 @@ document.addEventListener('keydown', e => {
   else if (mod && k === 'y') { e.preventDefault(); redo(); }
   else if (mod && k === 's') { e.preventDefault(); save(); }
   else if (!mod && k === 'f') $('freehand').checked = !$('freehand').checked;
+  else if (!mod && k === 'c') setCrop(!$('crop').checked);
+  else if (k === 'escape' && stroke?.crop) { stroke = null; render(); }
   else if (!mod && (k === '[' || k === ']')) setSize(brushSize() + (k === ']' ? 2 : -2));
 });
 </script>
