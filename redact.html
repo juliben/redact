@@ -19,6 +19,8 @@
   button, .btn { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
                  background: var(--panel); color: var(--text); cursor: pointer; }
   button:hover:not(:disabled), .btn:hover { border-color: var(--accent); }
+  button svg { width: 14px; height: 14px; vertical-align: -2px; margin-right: 6px; fill: none; stroke: currentColor;
+               stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   button:disabled { opacity: .45; cursor: default; }
   .muted { color: var(--muted); }
   .size { display: flex; align-items: center; gap: 8px; }
@@ -53,7 +55,7 @@
   <label class="btn">Open&hellip;<input id="file" type="file" accept="image/*" hidden></label>
   <label class="size muted">Size <input id="size" type="range" min="4" max="200" value="24"> <span id="sizeLabel">24px</span></label>
   <label><input id="freehand" type="checkbox"> Freehand</label>
-  <button id="crop" disabled>Crop</button>
+  <button id="crop" disabled><svg viewBox="0 0 24 24"><path d="M6 2v16h16M2 6h16v16"/></svg><span>Crop</span></button>
   <button id="cancelCrop" hidden>Cancel</button>
   <div class="actions">
     <button id="undo" disabled>Undo</button>
@@ -256,7 +258,8 @@ function extend(p) {
 function setCropping(r) {
   cropping = r;
   drag = null;
-  $('crop').textContent = r ? 'Apply' : 'Crop';
+  $('crop').lastChild.textContent = r ? 'Apply' : 'Crop';
+  $('crop').firstChild.style.display = r ? 'none' : '';
   $('cancelCrop').hidden = !r;
   canvas.style.cursor = r ? 'crosshair' : '';
   render();
