@@ -53,7 +53,8 @@
   <label class="btn">Open&hellip;<input id="file" type="file" accept="image/*" hidden></label>
   <label class="size muted">Size <input id="size" type="range" min="4" max="200" value="24"> <span id="sizeLabel">24px</span></label>
   <label><input id="freehand" type="checkbox"> Freehand</label>
-  <label><input id="crop" type="checkbox"> Crop</label>
+  <button id="crop" disabled>Crop</button>
+  <button id="cancelCrop" hidden>Cancel</button>
   <div class="actions">
     <button id="undo" disabled>Undo</button>
     <button id="redo" disabled>Redo</button>
@@ -84,7 +85,9 @@ const orig = document.createElement('canvas'), origCtx = orig.getContext('2d', {
 const touch = matchMedia('(pointer: coarse)').matches;
 const pointers = new Map();
 let view = { s: 1, x: 0, y: 0 }, pinch = null;
-let pixels = null, fileName = 'image', folder = null, ops = [], undone = [], stroke = null, hover = null;
+let pixels = null, fileName = 'image', folder = null, ops = [], undone = [], stroke = null, hover = null, cropping = null, drag = null;
+const cursors = { n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize', nw: 'nwse-resize', se: 'nwse-resize',
+                  ne: 'nesw-resize', sw: 'nesw-resize', move: 'move', new: 'crosshair' };
 
 async function load(file) {
   if (!file?.type.startsWith('image/')) return;
@@ -101,7 +104,8 @@ async function load(file) {
   $('drop').style.display = 'none';
   canvas.style.display = 'block';
   setView({ s: 1, x: 0, y: 0 });
-  $('save').disabled = $('folder').disabled = false;
+  $('save').disabled = $('folder').disabled = $('crop').disabled = false;
+  setCropping(null);
   rebuild();
   if (touch) {
     $('size').max = Math.max($('size').max, 255);
@@ -192,8 +196,8 @@ function render() {
   const c = cropRect();
   ctx.setTransform(1, 0, 0, 1, -c.x, -c.y);
   ctx.drawImage(base, 0, 0);
-  if (stroke?.crop) {
-    const r = stroke.crop, px = canvas.width / canvas.getBoundingClientRect().width;
+  if (cropping) {
+    const r = cropping, px = canvas.width / canvas.getBoundingClientRect().width, hs = (touch ? 14 : 10) * px;
     ctx.fillStyle = 'rgba(0,0,0,.55)';
     ctx.beginPath();
     ctx.rect(c.x, c.y, c.w, c.h);
@@ -202,8 +206,17 @@ function render() {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = px;
     ctx.strokeRect(r.x + px / 2, r.y + px / 2, r.w - px, r.h - px);
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    for (const fx of [0, .5, 1]) for (const fy of [0, .5, 1]) {
+      if (fx === .5 && fy === .5) continue;
+      const x = Math.min(c.x + c.w - hs, Math.max(c.x, r.x + r.w * fx - hs / 2));
+      const y = Math.min(c.y + c.h - hs, Math.max(c.y, r.y + r.h * fy - hs / 2));
+      ctx.fillRect(x, y, hs, hs);
+      ctx.strokeRect(x + px / 2, y + px / 2, hs - px, hs - px);
+    }
   } else if (stroke) paint(ctx, stroke);
-  if (hover && !$('crop').checked) {
+  if (hover && !cropping) {
     const size = brushSize(), px = canvas.width / canvas.getBoundingClientRect().width;
     ctx.save();
     ctx.globalCompositeOperation = 'difference';
@@ -225,11 +238,6 @@ function point(e) {
 
 function extend(p) {
   const { size, start, last } = stroke;
-  if (stroke.crop) {
-    const x = Math.round(Math.min(start.x, p.x)), y = Math.round(Math.min(start.y, p.y));
-    stroke.crop = { x, y, w: Math.round(Math.max(start.x, p.x)) - x, h: Math.round(Math.max(start.y, p.y)) - y };
-    return;
-  }
   stroke.ink = null;
   if (!$('freehand').checked) {
     const x0 = Math.round(Math.min(start.x, p.x) - size / 2), x1 = Math.round(Math.max(start.x, p.x) + size / 2);
@@ -243,6 +251,50 @@ function extend(p) {
     if (!prev || prev.x !== r.x || prev.y !== r.y) stroke.rects.push(r);
   }
   stroke.last = p;
+}
+
+function setCropping(r) {
+  cropping = r;
+  drag = null;
+  $('crop').textContent = r ? 'Apply' : 'Crop';
+  $('cancelCrop').hidden = !r;
+  canvas.style.cursor = r ? 'crosshair' : '';
+  render();
+}
+
+function applyCrop() {
+  const r = cropping, c = cropRect();
+  setCropping(null);
+  if (r.w < 4 || r.h < 4 || (r.x === c.x && r.y === c.y && r.w === c.w && r.h === c.h)) return;
+  ops.push({ crop: r });
+  undone = [];
+  rebuild();
+}
+
+function hit(p) {
+  const r = cropping, t = (touch ? 24 : 10) * canvas.width / canvas.getBoundingClientRect().width;
+  const inX = p.x > r.x - t && p.x < r.x + r.w + t, inY = p.y > r.y - t && p.y < r.y + r.h + t;
+  let m = '';
+  if (inX && Math.abs(p.y - r.y) < t) m += 'n'; else if (inX && Math.abs(p.y - r.y - r.h) < t) m += 's';
+  if (inY && Math.abs(p.x - r.x) < t) m += 'w'; else if (inY && Math.abs(p.x - r.x - r.w) < t) m += 'e';
+  return m || (p.x > r.x && p.x < r.x + r.w && p.y > r.y && p.y < r.y + r.h ? 'move' : 'new');
+}
+
+function dragCrop(p) {
+  const { mode, start, rect: r } = drag, c = cropRect(), dx = p.x - start.x, dy = p.y - start.y;
+  const cx = v => Math.round(Math.min(c.x + c.w, Math.max(c.x, v))), cy = v => Math.round(Math.min(c.y + c.h, Math.max(c.y, v)));
+  if (mode === 'move') {
+    cropping = { x: cx(Math.min(c.x + c.w - r.w, r.x + dx)), y: cy(Math.min(c.y + c.h - r.h, r.y + dy)), w: r.w, h: r.h };
+    return;
+  }
+  let x0 = r.x, y0 = r.y, x1 = r.x + r.w, y1 = r.y + r.h;
+  if (mode === 'new') { x0 = start.x; y0 = start.y; x1 = p.x; y1 = p.y; }
+  else {
+    if (mode.includes('w')) x0 += dx; else if (mode.includes('e')) x1 += dx;
+    if (mode.includes('n')) y0 += dy; else if (mode.includes('s')) y1 += dy;
+  }
+  x0 = cx(x0); x1 = cx(x1); y0 = cy(y0); y1 = cy(y1);
+  cropping = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
 }
 
 canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
@@ -270,16 +322,27 @@ canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
   try { canvas.setPointerCapture(e.pointerId); } catch {}
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size === 2) { stroke = hover = null; startPinch(); render(); }
+  if (pointers.size === 2) { stroke = hover = drag = null; startPinch(); render(); }
   if (pointers.size > 1) return;
   const p = point(e);
-  stroke = $('crop').checked ? { start: p, crop: {} } : { size: brushSize(), start: p, last: p, rects: [], cells: new Map() };
+  if (cropping) {
+    drag = { mode: hit(p), start: p, rect: cropping };
+    if (drag.mode === 'new') dragCrop(p);
+    return render();
+  }
+  stroke = { size: brushSize(), start: p, last: p, rects: [], cells: new Map() };
   extend(p);
   render();
 });
 canvas.addEventListener('pointermove', e => {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pinch) return movePinch();
+  if (cropping) {
+    const p = point(e);
+    if (drag) dragCrop(p);
+    else if (e.pointerType !== 'touch') canvas.style.cursor = cursors[hit(p)];
+    return render();
+  }
   if (e.pointerType !== 'touch' || stroke) hover = point(e);
   if (stroke) extend(hover);
   render();
@@ -287,13 +350,13 @@ canvas.addEventListener('pointermove', e => {
 function finish(e) {
   pointers.delete(e.pointerId);
   if (pinch) { if (pointers.size < 2) pinch = null; return; }
+  if (cropping) {
+    if (drag && (cropping.w < 4 || cropping.h < 4)) cropping = drag.rect;
+    drag = null;
+    return render();
+  }
   if (e.pointerType === 'touch') hover = null;
   if (!stroke) return render();
-  if (stroke.crop) {
-    if (stroke.crop.w < 4 || stroke.crop.h < 4) { stroke = null; return render(); }
-    delete stroke.start;
-    setCrop(false);
-  }
   ops.push(stroke);
   undone = [];
   stroke = null;
@@ -303,8 +366,8 @@ canvas.addEventListener('pointerup', finish);
 canvas.addEventListener('pointercancel', finish);
 canvas.addEventListener('pointerleave', () => { hover = null; render(); });
 
-function undo() { if (ops.length) { undone.push(ops.pop()); rebuild(); } }
-function redo() { if (undone.length) { ops.push(undone.pop()); rebuild(); } }
+function undo() { if (ops.length) { setCropping(null); undone.push(ops.pop()); rebuild(); } }
+function redo() { if (undone.length) { setCropping(null); ops.push(undone.pop()); rebuild(); } }
 async function saveTo() {
   try { folder = await showDirectoryPicker({ mode: 'readwrite' }); } catch { return; }
   save();
@@ -326,6 +389,7 @@ function showSheet(name) {
 }
 function save() {
   if ($('save').disabled) return;
+  if (cropping) applyCrop();
   const name = `${fileName}-redacted.png`;
   if (touch) return showSheet(name);
   output().toBlob(async blob => {
@@ -345,19 +409,19 @@ function save() {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   }, 'image/png');
 }
-function setCrop(on) { $('crop').checked = on; canvas.style.cursor = on ? 'crosshair' : ''; render(); }
 function setSize(v) { $('size').value = v; $('sizeLabel').textContent = brushSize() + 'px'; render(); }
 
 $('done').onclick = () => { $('sheet').hidden = true; $('result').removeAttribute('src'); };
 $('undo').onclick = undo;
 $('redo').onclick = redo;
-$('clear').onclick = () => { if (confirm('Remove all edits?')) { ops = []; undone = []; rebuild(); } };
+$('clear').onclick = () => { if (confirm('Remove all edits?')) { setCropping(null); ops = []; undone = []; rebuild(); } };
 $('save').onclick = save;
 $('folder').onclick = saveTo;
 $('folder').hidden = $('folderLabel').hidden = !window.showDirectoryPicker;
 if (touch) $('drop').textContent = 'Upload an image\u2026';
 else $('save').textContent = 'Save image';
-$('crop').onchange = e => setCrop(e.target.checked);
+$('crop').onclick = () => cropping ? applyCrop() : setCropping({ ...cropRect() });
+$('cancelCrop').onclick = () => setCropping(null);
 $('size').oninput = e => setSize(e.target.value);
 $('file').onchange = e => { load(e.target.files[0]); e.target.value = ''; };
 
@@ -375,8 +439,9 @@ document.addEventListener('keydown', e => {
   else if (mod && k === 'y') { e.preventDefault(); redo(); }
   else if (mod && k === 's') { e.preventDefault(); save(); }
   else if (!mod && k === 'f') $('freehand').checked = !$('freehand').checked;
-  else if (!mod && k === 'c') setCrop(!$('crop').checked);
-  else if (k === 'escape' && stroke?.crop) { stroke = null; render(); }
+  else if (!mod && k === 'c' && !cropping && !$('crop').disabled) setCropping({ ...cropRect() });
+  else if (k === 'enter' && cropping) { e.preventDefault(); applyCrop(); }
+  else if (k === 'escape' && cropping) setCropping(null);
   else if (!mod && (k === '[' || k === ']')) setSize(brushSize() + (k === ']' ? 2 : -2));
 });
 </script>
